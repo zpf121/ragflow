@@ -255,7 +255,30 @@ class Retrieval(ToolBase, ABC):
         json_output = kbinfos["chunks"].copy()
 
         self._canvas.add_reference(kbinfos["chunks"], kbinfos["doc_aggs"])
-        form_cnt = "\n".join(kb_prompt(kbinfos, 200000, True))
+        # Extract metadata keys used in filtering
+        metadata_keys = None
+        include_metadata = False
+
+        if hasattr(self._param, 'meta_data_filter') and self._param.meta_data_filter and self._param.meta_data_filter.get("method") != "disabled":
+            include_metadata = True
+            method = self._param.meta_data_filter.get("method")
+
+            if method == "manual":
+                conditions = self._param.meta_data_filter.get("manual", [])
+                metadata_keys = {cond.get("key") for cond in conditions if cond.get("key")} if conditions else None
+            elif method == "semi_auto":
+                for item in self._param.meta_data_filter.get("semi_auto", []):
+                    if isinstance(item, str):
+                        metadata_keys = metadata_keys or set()
+                        metadata_keys.add(item)
+                    elif isinstance(item, dict) and item.get("key"):
+                        metadata_keys = metadata_keys or set()
+                        metadata_keys.add(item.get("key"))
+            # auto mode: show all metadata (LLM generates unpredictable conditions)
+            elif method == "auto":
+                metadata_keys = None
+
+        form_cnt = "\n".join(kb_prompt(kbinfos, 200000, True, include_metadata=include_metadata, metadata_keys=metadata_keys))
 
         # Set both formalized content and JSON output
         self.set_output("formalized_content", form_cnt)

@@ -101,7 +101,7 @@ def message_fit_in(msg, max_length=4000):
     return max_length, msg
 
 
-def kb_prompt(kbinfos, max_tokens, hash_id=False):
+def kb_prompt(kbinfos, max_tokens, hash_id=False, include_metadata=False, metadata_keys=None):
     from api.db.services.document_service import DocumentService
     from api.db.services.doc_metadata_service import DocMetadataService
 
@@ -121,10 +121,23 @@ def kb_prompt(kbinfos, max_tokens, hash_id=False):
 
     docs = DocumentService.get_by_ids([get_value(ck, "doc_id", "document_id") for ck in kbinfos["chunks"][:chunks_num]])
 
+    # Include metadata in prompt when filtering is enabled
+    # If metadata_keys provided, only show those keys
     docs_with_meta = {}
-    for d in docs:
-        meta = DocMetadataService.get_document_metadata(d.id)
-        docs_with_meta[d.id] = meta if meta else {}
+    if include_metadata:
+        for d in docs:
+            meta = DocMetadataService.get_document_metadata(d.id)
+            if meta:
+                if metadata_keys:
+                    filtered_meta = {k: v for k, v in meta.items() if k in metadata_keys}
+                    docs_with_meta[d.id] = filtered_meta
+                else:
+                    docs_with_meta[d.id] = meta
+            else:
+                docs_with_meta[d.id] = {}
+    else:
+        for d in docs:
+            docs_with_meta[d.id] = {}
     docs = docs_with_meta
 
     def draw_node(k, line):

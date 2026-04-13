@@ -549,7 +549,7 @@ async def async_chat(dialog, messages, stream=True, **kwargs):
     if prompt_config.get("cross_languages"):
         questions = [await cross_languages(dialog.tenant_id, dialog.llm_id, questions[0], prompt_config["cross_languages"])]
 
-    if dialog.meta_data_filter:
+    if dialog.meta_data_filter and dialog.meta_data_filter.get("method") != "disabled":
         metas = DocMetadataService.get_flatted_meta_by_kbs(dialog.kb_ids)
         attachments = await apply_meta_data_filter(
             dialog.meta_data_filter,
@@ -641,7 +641,30 @@ async def async_chat(dialog, messages, stream=True, **kwargs):
                 if ck["content_with_weight"]:
                     kbinfos["chunks"].insert(0, ck)
 
-    knowledges = kb_prompt(kbinfos, max_tokens)
+    # Extract metadata keys used in filtering
+    metadata_keys = None
+    include_metadata = False
+
+    if dialog.meta_data_filter and dialog.meta_data_filter.get("method") != "disabled":
+        include_metadata = True
+        method = dialog.meta_data_filter.get("method")
+
+        if method == "manual":
+            conditions = dialog.meta_data_filter.get("manual", [])
+            metadata_keys = {cond.get("key") for cond in conditions if cond.get("key")} if conditions else None
+        elif method == "semi_auto":
+            for item in dialog.meta_data_filter.get("semi_auto", []):
+                if isinstance(item, str):
+                    metadata_keys = metadata_keys or set()
+                    metadata_keys.add(item)
+                elif isinstance(item, dict) and item.get("key"):
+                    metadata_keys = metadata_keys or set()
+                    metadata_keys.add(item.get("key"))
+        # auto mode: show all metadata (LLM generates unpredictable conditions)
+        elif method == "auto":
+            metadata_keys = None
+
+    knowledges = kb_prompt(kbinfos, max_tokens, include_metadata=include_metadata, metadata_keys=metadata_keys)
     logging.debug("{}->{}".format(" ".join(questions), "\n->".join(knowledges)))
 
     retrieval_ts = timer()
@@ -1385,7 +1408,7 @@ async def async_ask(question, kb_ids, tenant_id, chat_llm_name=None, search_conf
     max_tokens = chat_mdl.max_length
     tenant_ids = list(set([kb.tenant_id for kb in kbs]))
 
-    if meta_data_filter:
+    if meta_data_filter and meta_data_filter.get("method") != "disabled":
         metas = DocMetadataService.get_flatted_meta_by_kbs(kb_ids)
         doc_ids = await apply_meta_data_filter(meta_data_filter, metas, question, chat_mdl, doc_ids)
 
@@ -1405,7 +1428,31 @@ async def async_ask(question, kb_ids, tenant_id, chat_llm_name=None, search_conf
         rank_feature=label_question(question, kbs)
     )
 
-    knowledges = kb_prompt(kbinfos, max_tokens)
+    # Extract metadata keys used in filtering
+    meta_data_filter = search_config.get("meta_data_filter")
+    metadata_keys = None
+    include_metadata = False
+
+    if meta_data_filter and meta_data_filter.get("method") != "disabled":
+        include_metadata = True
+        method = meta_data_filter.get("method")
+
+        if method == "manual":
+            conditions = meta_data_filter.get("manual", [])
+            metadata_keys = {cond.get("key") for cond in conditions if cond.get("key")} if conditions else None
+        elif method == "semi_auto":
+            for item in meta_data_filter.get("semi_auto", []):
+                if isinstance(item, str):
+                    metadata_keys = metadata_keys or set()
+                    metadata_keys.add(item)
+                elif isinstance(item, dict) and item.get("key"):
+                    metadata_keys = metadata_keys or set()
+                    metadata_keys.add(item.get("key"))
+        # auto mode: show all metadata (LLM generates unpredictable conditions)
+        elif method == "auto":
+            metadata_keys = None
+
+    knowledges = kb_prompt(kbinfos, max_tokens, include_metadata=include_metadata, metadata_keys=metadata_keys)
     sys_prompt = PROMPT_JINJA_ENV.from_string(ASK_SUMMARY).render(knowledge="\n".join(knowledges))
 
     msg = [{"role": "user", "content": question}]
@@ -1472,7 +1519,7 @@ async def gen_mindmap(question, kb_ids, tenant_id, search_config={}):
         rerank_model_config = get_model_config_by_type_and_name(tenant_id, LLMType.RERANK, rerank_id)
         rerank_mdl = LLMBundle(tenant_id, rerank_model_config)
 
-    if meta_data_filter:
+    if meta_data_filter and meta_data_filter.get("method") != "disabled":
         metas = DocMetadataService.get_flatted_meta_by_kbs(kb_ids)
         doc_ids = await apply_meta_data_filter(meta_data_filter, metas, question, chat_mdl, doc_ids)
 
